@@ -1,10 +1,10 @@
 from flask import Flask
+from routes.routes import routes_bp
 
 app = Flask(__name__)
 
-@app.route("/")
-def hello_world():
-    return "<p>Hello World!</p>"
+# Register Blueprints
+app.register_blueprint(routes_bp, url_prefix='/')
 
 if __name__ == "__main__":
     app.run(debug=True)
