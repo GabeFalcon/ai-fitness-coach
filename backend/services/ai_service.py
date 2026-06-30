@@ -1,149 +1,160 @@
 from openai import OpenAI
+import json
+from services.ai_safety_parser import safe_parse_ai_response
+from dotenv import load_dotenv
+import os
 
-client = OpenAI()
+load_dotenv()
+api_key = os.getenv("OPENAI_API_KEY")
 
+if not api_key:
+    raise ValueError("OPENAI_API_KEY is missing from environment")
 
-#-----------------
-# PROMPTS
-#-----------------
+client = OpenAI(api_key=api_key)
+
+# -------------------------
+# PROMPT: INITIAL PLAN
+# -------------------------
 def build_prompt(profile):
     return f"""
-    You are an elite fitness coach AI. Your ultimate goal is to help the user reach their goal phsyique. 
+You are an elite fitness coach AI.
 
-    Create a personalized training and nutrition plan.
+Create a personalized training and nutrition plan.
 
-    User Profile:
-    - Age: {profile['age']}
-    - Weight: {profile['weight']}
-    - Height: {profile['height']}
-    - Goal: {profile['goal']}
-    - Experience: {profile['experience']}
-    - Training days per week: {profile['days_per_week']}
+User Profile:
+- Age: {profile['age']}
+- Weight: {profile['weight']}
+- Height: {profile['height']}
+- Goal: {profile['goal']}
+- Experience: {profile['experience']}
+- Training days: {profile['days_per_week']}
 
-    Rules:
-    - Be realistic and safe
-    - Keep it structured and easy to follow
-    - Do NOT be generic
-    - Adapt intensity to experience level
-    - Include workout, diet, and reasoning
+Rules:
+- Be realistic and safe
+- Avoid generic plans
+- Adapt to experience level
+- Include workouts + diet
 
-    Return format:
+Return ONLY valid JSON:
 
-    {{
-        "plan_type": "...",
-
-        "workouts": {{
-            "push_day": [
-                {{
-                    "exercise": "Bench Press",
-                    "sets": [
-                        {{"reps": 10, "weight": 135}},
-                        {{"reps": 8, "weight": 135}},
-                        {{"reps": 6, "weight": 135}}
-                    ]
-                }}
-            ]
-        }},
-        
-        "diet": {{
-        "calories": 2200,
-        "protein": 180,
-        "carbs": 220,
-        "fat": 65
-        }}
-    }}
-    """
-
-# Plan Adjuster / Recommender
-def build_adjustment_prompt(profile, plan, checkins, user_message, progress):
-    return f"""
-    You are an adaptive fitness coach AI that manages a living training plan.
-
-    You are NOT allowed to randomly rewrite the plan.
-
-    You must decide ONE of the following:
-
-    1. KEEP PLAN (no changes needed)
-    2. SMALL ADJUSTMENT (minor edits like reps, volume, cardio)
-    3. MAJOR ADJUSTMENT (only if progress is clearly stalled or user requests it)
-
-    USER MESSAGE:
-    {user_message}
-
-    CURRENT PLAN:
-    {plan}
-
-    CHECK-IN HISTORY:
-    {checkins}
-
-    USER PROFILE:
-    - Age: {profile['age']}
-    - Weight: {profile['weight']}
-    - Goal: {profile['goal']}
-    - Experience: {profile['experience']}
-    - Training days: {profile['days_per_week']}
-    - Progress Analysis: {progress}
-    
-    RULES:
-    - Decide if plan should change
-    - Be conservative with changes
-    - Do NOT change everything unless necessary
-    - Explain WHY you changed or did NOT change
-
-    OUTPUT JSON:
-    decision (keep|small_adjustment|major_adjustment)
-    plan_type
-    workout
-    diet
-    notes
+{{
+  "plan_type": "cut/bulk/recomp",
+  "workouts": {{
+    "push_day": [
+      {{
+        "exercise": "bench_press",
+        "sets": [
+          {{"reps": 10, "weight": 135}},
+          {{"reps": 8, "weight": 135}}
+        ]
+      }}
+    ]
+  }},
+  "diet": {{
+    "calories": 2200,
+    "protein": 180,
+    "carbs": 220,
+    "fat": 65
+  }}
+}}
 """
 
-# ----------------------
-# AI FUNCTIONS
-# ----------------------
 
+# -------------------------
+# PROMPT: ADJUSTMENT
+# -------------------------
+def build_adjustment_prompt(profile, plan, checkins, user_message, progress):
+    return f"""
+You are an adaptive fitness coach AI.
+
+You manage a living training system.
+
+USER MESSAGE:
+{user_message}
+
+CURRENT PLAN:
+{json.dumps(plan, indent=2)}
+
+CHECK-INS:
+{json.dumps(checkins, indent=2)}
+
+PROGRESS:
+{json.dumps(progress, indent=2)}
+
+PROFILE:
+- Age: {profile['age']}
+- Weight: {profile['weight']}
+- Goal: {profile['goal']}
+- Experience: {profile['experience']}
+- Training days: {profile['days_per_week']}
+
+RULES:
+- Do NOT rewrite the whole plan unless necessary
+- Be conservative with changes
+- Only adjust when needed
+
+Return STRICT JSON:
+
+{{
+  "decision": "keep | small_adjustment | major_adjustment",
+  "workout_changes": {{}},
+  "diet_changes": {{}},
+  "reasoning": "",
+  "confidence": 0.0
+}}
+"""
+
+
+# -------------------------
+# GENERATE PLAN
+# -------------------------
 def generate_ai_plan(profile):
+    try:
+        prompt = build_prompt(profile)
 
-    prompt = build_prompt(profile)
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are CoachAI, a fitness planning AI."},
+                {"role": "user", "content": prompt}
+            ]
+        )
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {
-                "role": "system",
-                "content": "You are CoachAI, an elite fitness coach."
-            },
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ]
-    )
+        content = response.choices[0].message.content
+        return safe_parse_ai_response(content)
 
-    return response.choices[0].message.content
+    except Exception as e:
+        return {
+            "error": "ai_failure",
+            "details": str(e)
+        }
 
+# -------------------------
+# CHAT / ADJUSTMENT ENGINE
+# -------------------------
+def coach_chat(context, user_message, progress=None):
+    try:
+        prompt = build_adjustment_prompt(
+            context["profile"],
+            context["plan"],
+            context["checkins"],
+            user_message,
+            progress
+        )
 
-def coach_chat(context, user_message):
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are CoachAI, an adaptive fitness coach."},
+                {"role": "user", "content": prompt}
+            ]
+        )
 
-    prompt = build_adjustment_prompt(
-        context["profile"],
-        context["plan"],
-        context["checkins"],
-        user_message
-    )
+        content = response.choices[0].message.content
+        return safe_parse_ai_response(content)
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {
-                "role": "system",
-                "content": "You are CoachAI, an adaptive fitness coach."
-            },
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ]
-    )
-
-    return response.choices[0].message.content
+    except Exception as e:
+        return {
+            "error": "ai_chat_failure",
+            "details": str(e)
+        }

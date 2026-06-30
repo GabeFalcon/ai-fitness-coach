@@ -1,23 +1,24 @@
-from database.memory_db import db
+from database.db import get_connection
 from datetime import datetime
+import json
 
 
 def update_exercise_history(user_id, exercises):
+    """
+    Converts raw check-in exercises into structured progress logs.
+    """
 
-    if user_id not in db["exercise_history"]:
-        db["exercise_history"][user_id] = {}
-
-    user_history = db["exercise_history"][user_id]
+    conn = get_connection()
+    cursor = conn.cursor()
 
     for exercise_name, exercise_data in exercises.items():
         sets = exercise_data.get("sets", [])
 
         if not sets:
-            continue  # skip invalid entry
+            continue
 
         total_reps = 0
         total_weight = 0
-
         valid_sets = 0
 
         for s in sets:
@@ -37,14 +38,26 @@ def update_exercise_history(user_id, exercises):
         avg_reps = total_reps / valid_sets
         avg_weight = total_weight / valid_sets
 
-        if exercise_name not in user_history:
-            user_history[exercise_name] = []
+        cursor.execute("""
+            INSERT INTO exercise_history (
+                user_id,
+                exercise_name,
+                avg_reps,
+                avg_weight,
+                sets_completed,
+                date
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            user_id,
+            exercise_name,
+            avg_reps,
+            avg_weight,
+            valid_sets,
+            datetime.now().isoformat()
+        ))
 
-        user_history[exercise_name].append({
-            "date": datetime.now().isoformat(),
-            "avg_reps": avg_reps,
-            "avg_weight": avg_weight,
-            "sets_completed": valid_sets
-        })
+    conn.commit()
+    conn.close()
 
-    return user_history
+    return True

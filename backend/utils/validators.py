@@ -1,4 +1,4 @@
-from database.memory_db import db
+from database.db import get_connection
 
 def validate_user_request(data):
     if not data:
@@ -8,7 +8,18 @@ def validate_user_request(data):
     if not user_id:
         return None, {"error": "missing user_id"}
 
-    if user_id not in db["users"]:
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT user_id FROM users WHERE user_id = ?",
+        (user_id,)
+    )
+
+    user = cursor.fetchone()
+    conn.close()
+
+    if not user:
         return None, {"error": "user does not exist"}
 
     return user_id, None

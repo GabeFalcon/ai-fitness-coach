@@ -1,6 +1,6 @@
 from flask import Blueprint, request
 import uuid
-from database.memory_db import db
+from database.db import get_connection
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -18,19 +18,35 @@ def signup():
         if f not in data:
             return {"error": f"missing field: {f}"}, 400
 
-    # Make sure the email is unique
-    for existing_user in db["users"].values():
-        if existing_user.get("email") == data["email"]:
-            return {"error": "account with email exsits"}, 400
-    
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # 1. CHECK IF EMAIL EXISTS
+    cursor.execute(
+        "SELECT * FROM users WHERE email = ?",
+        (data["email"],)
+    )
+
+    existing_user = cursor.fetchone()
+
+    if existing_user:
+        conn.close()
+        return {"error": "account with email exists"}, 400
+
+    # 2. CREATE USER
     user_id = str(uuid.uuid4())
 
-    # Store the user data
-    db["users"][user_id] = {
-        "user_id": user_id,
-        "email": data["email"],
-        "username": data["username"],
-        "password": data["password"]
-    }
+    cursor.execute("""
+        INSERT INTO users (user_id, email, username, password)
+        VALUES (?, ?, ?, ?)
+    """, (
+        user_id,
+        data["email"],
+        data["username"],
+        data["password"]
+    ))
+
+    conn.commit()
+    conn.close()
 
     return {"user_id": user_id}

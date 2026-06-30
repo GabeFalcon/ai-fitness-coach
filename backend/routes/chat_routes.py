@@ -1,9 +1,9 @@
 from flask import Blueprint, request
-from database.memory_db import db
 from utils.validators import validate_user_request
 from utils.user_context import get_user_context
 from services.progress_service import analyze_progress
 from services.ai_service import coach_chat
+from services.plan_service import apply_ai_adjustment
 
 chat_bp = Blueprint("chat", __name__)
 
@@ -34,7 +34,10 @@ def chat():
         progress = progress
     )
 
+    updated_plan = apply_ai_adjustment(user_id, response)
+
     return {
         "user_id": user_id,
-        "response": response
+        "response": response,
+        "updated_plan": updated_plan
     }

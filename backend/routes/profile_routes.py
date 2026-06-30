@@ -1,62 +1,120 @@
 from flask import Blueprint, request
-from database.memory_db import db
+from database.db import get_connection
 
 profile_bp = Blueprint("profile", __name__)
 
-# CONSTANTS
-ALLOWED_GOALS = ["fat_loss", "muscle_gain", "maintenance", "fat_loss_and_muscle_gain"]
+ALLOWED_GOALS = [
+    "fat_loss",
+    "muscle_gain",
+    "maintenance",
+    "fat_loss_and_muscle_gain"
+]
 
-ALLOWED_EXPERIENCE = ["beginner", "intermediate", "advanced"]
+ALLOWED_EXPERIENCE = [
+    "beginner",
+    "intermediate",
+    "advanced"
+]
 
-# STORE USER DATA
+
+# -----------------------
+# STORE USER PROFILE
+# -----------------------
+
 @profile_bp.route("/onboarding", methods=["POST"])
 def onboarding():
     data = request.get_json()
 
-    # Ensure data exists
     if not data:
         return {"error": "no JSON provided"}, 400
 
-    required = ["age", "weight", "height", "days_per_week",
-                 "goal", "experience", "user_id"]
-    
-    for f in required:
-        if f not in data:
-            return {"error": f"missing field: {f}"}, 400
+    required = [
+        "user_id",
+        "age",
+        "weight",
+        "height",
+        "days_per_week",
+        "goal",
+        "experience"
+    ]
+
+    for field in required:
+        if field not in data:
+            return {"error": f"missing field: {field}"}, 400
 
     if data["goal"] not in ALLOWED_GOALS:
         return {"error": "invalid goal"}, 400
-    
+
     if data["experience"] not in ALLOWED_EXPERIENCE:
         return {"error": "invalid experience"}, 400
-    
-    if data["user_id"] not in db["users"]:
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # Make sure user exists
+    cursor.execute(
+        "SELECT user_id FROM users WHERE user_id = ?",
+        (data["user_id"],)
+    )
+
+    if cursor.fetchone() is None:
+        conn.close()
         return {"error": "user not found"}, 404
 
-    # Store the data
-    db["profiles"][data["user_id"]] = {
-        "age": int(data["age"]),
-        "weight": float(data["weight"]),
-        "height": int(data["height"]),
-        "days_per_week": int(data["days_per_week"]),
-        "goal": data["goal"],
-        "experience": data["experience"]
-    }
+    # Save profile
+    cursor.execute("""
+        INSERT OR REPLACE INTO profiles
+        (
+            user_id,
+            age,
+            weight,
+            height,
+            days_per_week,
+            goal,
+            experience
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (
+        data["user_id"],
+        int(data["age"]),
+        float(data["weight"]),
+        int(data["height"]),
+        int(data["days_per_week"]),
+        data["goal"],
+        data["experience"]
+    ))
+
+    conn.commit()
+    conn.close()
 
     return {"message": "profile created"}
 
-# RETRIEVE USER DATA
+
+# -----------------------
+# GET PROFILE
+# -----------------------
+
 @profile_bp.route("/profile", methods=["GET"])
 def profile():
+
     user_id = request.args.get("user_id")
 
     if not user_id:
         return {"error": "missing user_id"}, 400
 
-    if user_id not in db["profiles"]:
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT * FROM profiles WHERE user_id = ?",
+        (user_id,)
+    )
+
+    profile = cursor.fetchone()
+
+    conn.close()
+
+    if profile is None:
         return {"error": "profile not found"}, 404
 
-    return {
-        "user_id": user_id,
-        "data": db["profiles"][user_id]
-    }
+    return dict(profile)

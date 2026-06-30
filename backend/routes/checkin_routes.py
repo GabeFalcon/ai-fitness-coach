@@ -1,6 +1,6 @@
 from flask import Blueprint, request
 from datetime import datetime
-from database.memory_db import db
+from database.db import get_connection
 from utils.validators import validate_user_request
 from services.checkin_service import update_exercise_history
 
@@ -19,20 +19,36 @@ def checkin():
     if not exercises:
         return {"error": "missing exercises"}, 400
 
-    if user_id not in db["checkins"]:
-        db["checkins"][user_id] = []
+    conn = get_connection()
+    cursor = conn.cursor()
 
-    checkin_entry = {
-        "day": len(db["checkins"][user_id]) + 1,
-        "date": datetime.now().isoformat(),
-        "exercises": exercises
-    }
+    # 1. GET CURRENT DAY COUNT
+    cursor.execute(
+        "SELECT COUNT(*) as count FROM checkins WHERE user_id = ?",
+        (user_id,)
+    )
+    row = cursor.fetchone()
+    day_number = (row["count"] + 1) if row else 1
 
-    db["checkins"][user_id].append(checkin_entry)
+    # 2. STORE CHECKIN (convert dict → JSON string)
+    cursor.execute("""
+        INSERT INTO checkins (user_id, day, date, exercises)
+        VALUES (?, ?, ?, ?)
+    """, (
+        user_id,
+        day_number,
+        datetime.now().isoformat(),
+        json.dumps(exercises)
+    ))
+
+    conn.commit()
+    conn.close()
+
+    # 3. STILL UPDATE ANALYTICS (keeps your AI features alive)
     update_exercise_history(user_id, exercises)
 
     return {
         "message": "check-in saved",
-        "checkin": checkin_entry,
-        "total_checkins": len(db["checkins"][user_id])
+        "day": day_number,
+        "total_checkins": day_number
     }

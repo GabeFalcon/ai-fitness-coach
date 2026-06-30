@@ -1,8 +1,9 @@
 from flask import Blueprint, request
 from datetime import datetime
-from database.memory_db import db
+from database.db import get_connection
 from utils.validators import validate_user_request
 from services.ai_service import generate_ai_plan
+import json
 
 plan_bp = Blueprint("plan", __name__)
 
@@ -15,21 +16,49 @@ def generate_plan():
     if error:
         return error, 400
 
-    profile = db["profiles"][user_id]
+    conn = get_connection()
+    cursor = conn.cursor()
 
-    # Store the plan
+    # 1. GET PROFILE FROM DB
+    cursor.execute(
+        "SELECT * FROM profiles WHERE user_id = ?",
+        (user_id,)
+    )
+    profile = cursor.fetchone()
+
+    if not profile:
+        conn.close()
+        return {"error": "profile not found"}, 404
+
+    profile = dict(profile)
+
+    # 2. GENERATE AI PLAN
     plan = generate_ai_plan(profile)
+    plan_json = json.dumps(plan)
 
-    db["plans"][user_id] = {
-    "content": plan,
-    "version": 1,
-    "created_at": datetime.now().isoformat()
-    }
+    # 3. UPSERT PLAN (insert or replace)
+    cursor.execute("""
+        INSERT INTO plans (user_id, content, version, created_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            content = excluded.content,
+            version = plans.version + 1,
+            created_at = excluded.created_at
+    """, (
+        user_id,
+        plan_json,
+        1,
+        datetime.now().isoformat()
+    ))
+
+    conn.commit()
+    conn.close()
 
     return {
         "user_id": user_id,
-        "plan": plan
+        "plan": json.loads(plan_json)
     }
+
 
 
 # PLAN RETRIEVAL
@@ -40,7 +69,20 @@ def get_plan():
     if not user_id:
         return {"error": "missing user_id"}, 400
 
-    if user_id not in db["profiles"]:
-        return {"error": "profile not found"}, 404
+    conn = get_connection()
+    cursor = conn.cursor()
 
-    return db["plans"].get(user_id, {"error": "no plan found"})
+    cursor.execute(
+        "SELECT * FROM plans WHERE user_id = ?",
+        (user_id,)
+    )
+    row = cursor.fetchone()
+
+    conn.close()
+
+    if not row:
+        return {"error": "no plan found"}, 404
+
+    data = dict(row)
+    data["content"] = json.loads(data["content"])
+    return data
