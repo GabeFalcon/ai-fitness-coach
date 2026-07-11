@@ -30,29 +30,48 @@ def init_db():
         user_id TEXT PRIMARY KEY,
         content TEXT,
         version INTEGER,
-        created_at TEXT
+        created_at TEXT,
+        last_updated TEXT,
+        change_reason TEXT
     )
     """)
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS checkins (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id TEXT,
-        day INTEGER,
-        date TEXT,
-        exercises TEXT
+        user_id TEXT NOT NULL,
+        weight REAL,
+        calories_avg INTEGER,
+        protein_avg INTEGER,
+        sleep_avg REAL,
+        completed_workouts INTEGER,
+        notes TEXT,
+        created_at TEXT
     )
     """)
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS exercise_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id TEXT,
+        user_id TEXT NOT NULL,
         exercise_name TEXT,
-        avg_reps REAL,
-        avg_weight REAL,
-        sets_completed INTEGER,
-        date TEXT
+        set_number INTEGER,
+        reps INTEGER,
+        weight REAL,
+        completed INTEGER,
+        workout_date TEXT
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS ai_decisions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT,
+        decision TEXT,
+        confidence REAL,
+        reasoning TEXT,
+        applied INTEGER,
+        created_at TEXT
     )
     """)
 

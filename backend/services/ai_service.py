@@ -35,28 +35,37 @@ Rules:
 - Adapt to experience level
 - Include workouts + diet
 
+Allowed splits:
+- "PPL"
+- "Upper_Lower"
+- "Full_Body"
+- "Hybrid"
+- "Custom"
+
 Return ONLY valid JSON:
 
-{{
-  "plan_type": "cut/bulk/recomp",
-  "workouts": {{
-    "push_day": [
-      {{
-        "exercise": "bench_press",
-        "sets": [
-          {{"reps": 10, "weight": 135}},
-          {{"reps": 8, "weight": 135}}
-        ]
-      }}
-    ]
-  }},
-  "diet": {{
-    "calories": 2200,
+{
+  "plan_type": "bulk",
+  "split": "Upper_Lower",
+  "schedule": [
+    {
+      "name": "Upper A",
+      "focus": "upper",
+      "exercises": []
+    },
+    {
+      "name": "Lower A",
+      "focus": "lower",
+      "exercises": []
+    }
+  ],
+  "diet": {
+    "calories": 2500,
     "protein": 180,
     "carbs": 220,
     "fat": 65
-  }}
-}}
+  }
+}
 """
 
 
@@ -69,14 +78,28 @@ You are an adaptive fitness coach AI.
 
 You manage a living training system.
 
+The current program is assumed to be good.
+
+Do NOT modify the workout or diet unless there is strong evidence that the current plan is no longer appropriate.
+
+Prefer coaching advice over program changes.
+
+A single bad workout is NOT enough reason to modify the plan.
+
+A plateau should first be addressed with coaching cues (sleep, nutrition, technique, recovery, effort).
+
+Only change exercises or split after repeated evidence that simpler interventions have failed.
+
+Preserve as much of the existing program as possible.
+
 USER MESSAGE:
 {user_message}
 
 CURRENT PLAN:
-{json.dumps(plan, indent=2)}
+{json.dumps(plan or {"note": "no existing plan"}, indent=2)}
 
 CHECK-INS:
-{json.dumps(checkins, indent=2)}
+{json.dumps(checkins[-7:], indent=2)}
 
 PROGRESS:
 {json.dumps(progress, indent=2)}
@@ -93,11 +116,29 @@ RULES:
 - Be conservative with changes
 - Only adjust when needed
 
-Return STRICT JSON:
+STRICT PATCH FORMAT:
 
+You are editing an existing JSON object.
+
+You MUST NOT:
+- create new top-level workout categories
+- rename workout days
+- restructure the plan
+
+You MAY ONLY:
+- add exercises inside existing days
+- modify sets/reps/weights
+
+Return STRICT JSON:
+Example-
 {{
   "decision": "keep | small_adjustment | major_adjustment",
-  "workout_changes": {{}},
+  "workout_changes": {{{
+      "action":"replace_exercise",
+      "day":"Push A",
+      "old":"Bench Press",
+      "new":"Incline Bench Press"
+    },}},
   "diet_changes": {{}},
   "reasoning": "",
   "confidence": 0.0
@@ -132,12 +173,16 @@ def generate_ai_plan(profile):
 # -------------------------
 # CHAT / ADJUSTMENT ENGINE
 # -------------------------
-def coach_chat(context, user_message, progress=None):
+def coach_chat(context, user_message, progress):
     try:
+        profile = context.get("profile", {})
+        plan = context.get("plan", {})
+        checkins = context.get("checkins", [])
+
         prompt = build_adjustment_prompt(
-            context["profile"],
-            context["plan"],
-            context["checkins"],
+            profile,
+            plan,
+            checkins,
             user_message,
             progress
         )
@@ -147,11 +192,11 @@ def coach_chat(context, user_message, progress=None):
             messages=[
                 {"role": "system", "content": "You are CoachAI, an adaptive fitness coach."},
                 {"role": "user", "content": prompt}
-            ]
+            ],
+            response_format={"type": "json_object"}
         )
 
-        content = response.choices[0].message.content
-        return safe_parse_ai_response(content)
+        return json.loads(response.choices[0].message.content)
 
     except Exception as e:
         return {

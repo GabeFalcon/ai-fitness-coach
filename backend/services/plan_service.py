@@ -1,5 +1,6 @@
 from database.db import get_connection
 import json
+from services.plan_merge_service import merge_plan_changes
 
 
 def apply_ai_adjustment(user_id, ai_response):
@@ -32,21 +33,29 @@ def apply_ai_adjustment(user_id, ai_response):
 
     # 3. KEEP PLAN (NO CHANGE)
     if decision == "keep":
+        plan["content"] = json.loads(plan["content"])
         conn.close()
         return plan
 
-    # 4. INCREMENT VERSION
-    new_version = (plan.get("version") or 1) + 1
+    # 4. LOAD CURRENT PLAN
+    current_plan = json.loads(plan["content"])
 
-    # 5. UPDATE PLAN METADATA ONLY (MVP SAFE APPROACH)
-    updated_plan = {
-        "content": plan["content"],
-        "version": new_version,
-        "last_decision": decision,
-        "last_update": json.dumps(ai_response),
-    }
+    # 5. GET AI WORKOUT CHANGES
+    workout_changes = {}
 
-    # 6. SAVE BACK TO DB
+    if isinstance(ai_response, dict):
+        workout_changes = ai_response.get("workout_changes", {})
+
+    # 6. MERGE CHANGES INTO PLAN
+    updated_content = merge_plan_changes(
+        current_plan,
+        workout_changes
+    )
+
+    # 7. INCREMENT VERSION
+    new_version = (plan["version"] or 1) + 1
+
+    # 8. SAVE UPDATED PLAN
     cursor.execute("""
         UPDATE plans
         SET content = ?,
@@ -54,13 +63,17 @@ def apply_ai_adjustment(user_id, ai_response):
             created_at = ?
         WHERE user_id = ?
     """, (
-        updated_plan["content"],
-        updated_plan["version"],
-        plan["created_at"],  # keep original timestamp
+        json.dumps(updated_content),
+        new_version,
+        plan["created_at"],
         user_id
     ))
 
     conn.commit()
     conn.close()
 
-    return updated_plan
+    return {
+        "version": new_version,
+        "decision": decision,
+        "content": updated_content
+    }
